@@ -1,0 +1,342 @@
+# 📖 Dokumentasi Proyek — Finora
+
+> Dokumentasi teknis lengkap untuk **Finora**, aplikasi pencatatan keuangan pribadi berbasis web single-file (HTML/CSS/JavaScript). Dokumen ini menjelaskan setiap modul, fitur, tampilan, dan logika di dalam aplikasi agar mudah dipahami — baik oleh kontributor baru, maupun oleh diri sendiri di masa depan saat perlu mengingat kembali cara kerja sesuatu.
+
+---
+
+## Daftar Isi
+
+1. [Gambaran Umum](#1-gambaran-umum)
+2. [Filosofi & Arsitektur](#2-filosofi--arsitektur)
+3. [Struktur File](#3-struktur-file)
+4. [Model Data (State)](#4-model-data-state)
+5. [Sistem Render](#5-sistem-render)
+6. [Autentikasi & Keamanan Akun](#6-autentikasi--keamanan-akun)
+7. [Halaman Dashboard](#7-halaman-dashboard)
+8. [Halaman Jurnal Transaksi](#8-halaman-jurnal-transaksi)
+9. [Halaman Budget](#9-halaman-budget)
+10. [Halaman Tabungan & Sistem Streak](#10-halaman-tabungan--sistem-streak)
+11. [Halaman Kategori](#11-halaman-kategori)
+12. [Halaman Laporan & Ekspor PDF](#12-halaman-laporan--ekspor-pdf)
+13. [Halaman Pengaturan](#13-halaman-pengaturan)
+14. [Manajemen Rekening](#14-manajemen-rekening)
+15. [Sistem Mata Uang & Kurs Real-time](#15-sistem-mata-uang--kurs-real-time)
+16. [Notifikasi](#16-notifikasi)
+17. [Penyimpanan Data & Sinkronisasi](#17-penyimpanan-data--sinkronisasi)
+18. [Tema, Animasi & Aksesibilitas](#18-tema-animasi--aksesibilitas)
+19. [Watermark & Branding](#19-watermark--branding)
+20. [Keterbatasan yang Diketahui](#20-keterbatasan-yang-diketahui)
+21. [Peta Fungsi Penting](#21-peta-fungsi-penting)
+
+---
+
+## 1. Gambaran Umum
+
+**Finora** adalah aplikasi pencatatan keuangan pribadi yang berjalan sepenuhnya di **satu file HTML** (`finora.html`). Tidak ada proses build, tidak ada `npm install` — cukup buka file-nya di browser, dan aplikasi langsung berjalan.
+
+Aplikasi ini dirancang menyerupai aplikasi mobile banking, dengan antarmuka bergaya *neumorphic* (bayangan lembut, permukaan timbul-tenggelam), mendukung tema terang & gelap, dan dioptimalkan untuk layar ponsel maupun desktop.
+
+**Fitur inti yang dibawakan:**
+- Pencatatan transaksi (pemasukan, pengeluaran, transfer antar rekening)
+- Multi-rekening dengan kustomisasi warna
+- Anggaran (budget) per kategori dengan peringatan otomatis
+- Target tabungan dengan sistem *streak* harian
+- Laporan visual (grafik) dan ekspor PDF
+- Notifikasi pengingat tagihan & streak
+- Login lokal (tersimpan di browser) **atau** login cloud opsional (email/password & Google, via Firebase) untuk sinkronisasi lintas perangkat
+- Sembunyikan saldo ala aplikasi perbankan
+- Foto profil, tema gelap/terang, dan animasi transisi halus
+
+---
+
+## 2. Filosofi & Arsitektur
+
+Finora **tidak** memakai framework (React/Vue/dsb). Semua tampilan dibangun dengan pola render manual:
+
+```
+State (objek JS)  →  renderApp()  →  app.innerHTML = "...string HTML..."
+```
+
+Setiap kali ada perubahan data (menambah transaksi, mengganti tema, membuka modal, dst.), fungsi `renderApp()` dipanggil ulang dan **membangun ulang seluruh isi `<div id="app">` dari nol**, berdasarkan kondisi `state` saat itu. Ini disebut pola *"full re-render dari state"* — mirip filosofi React, tapi ditulis manual tanpa virtual DOM.
+
+**Konsekuensi penting dari pola ini** (dan bagaimana aplikasi mengatasinya):
+
+| Tantangan | Solusi yang dipakai |
+|---|---|
+| Mengetik di kolom input memicu render ulang → elemen input "hilang & muncul lagi" → **keyboard HP menutup sendiri** | Input teks/nominal **tidak** memicu `renderApp()` penuh. Nilai disimpan diam-diam ke `state`, lalu elemen terkait (tombol submit, chip saran, dsb.) diperbarui langsung lewat manipulasi DOM (`el.textContent`, `el.value`, dst.) tanpa membangun ulang halaman. |
+| Elemen scroll horizontal (mis. daftar kartu rekening) ikut "dibangun ulang" tiap render → **posisi scroll reset ke kiri** | `renderApp()` secara otomatis menyimpan `scrollLeft` elemen `#accountsScroll` sebelum render, dan mengembalikannya persis setelah DOM baru terbentuk. |
+| Modal/drawer butuh animasi keluar, tapi elemennya langsung dihapus dari DOM saat state berubah | Fungsi `closeWithAnimation()` menambahkan class `.fn-closing` dulu ke elemen (memicu animasi CSS keluar), baru **setelah jeda beberapa ratus milidetik** state benar-benar diubah dan `renderApp()` dipanggil. |
+| Animasi halaman jangan main setiap render kecil (misal buka form kecil), hanya saat benar-benar pindah menu | `renderApp()` membandingkan `state.page` saat ini dengan halaman yang dirender sebelumnya (`state._lastRenderedPage`) — animasi `fn-page-enter` hanya ditambahkan kalau memang berbeda. |
+
+Pola-pola di atas adalah bagian paling "tidak kasat mata" dari kode, tapi paling krusial untuk pengalaman pengguna yang mulus.
+
+---
+
+## 3. Struktur File
+
+Karena ini proyek single-file, "struktur" di sini merujuk pada **urutan blok kode di dalam `finora.html`**, bukan struktur folder:
+
+```
+finora.html
+├─ <head>
+│   ├─ Meta tag, judul halaman
+│   ├─ Google Fonts (Inter, Space Grotesk)
+│   └─ Script eksternal via CDN: Chart.js, jsPDF, jsPDF-AutoTable
+├─ <style> ................... Seluruh CSS aplikasi
+│   ├─ Variabel warna tema (:root, .theme-light, .theme-dark)
+│   ├─ Komponen dasar (kartu, tombol, input, avatar, dst.)
+│   ├─ Layout (sidebar, topbar, grid, halaman)
+│   ├─ Komponen per fitur (kartu rekening, streak, modal, dsb.)
+│   ├─ @keyframes animasi & transisi
+│   └─ Media query responsif (mobile breakpoint)
+├─ <body>
+│   ├─ <div id="app">........... Kontainer utama, diisi oleh JS
+│   └─ <script>
+│       ├─ Helper format (tanggal, angka, mata uang)
+│       ├─ Logo & ikon (SVG inline + gambar base64)
+│       ├─ Data awal (kategori, rekening, transaksi contoh, dst.)
+│       ├─ `state` — satu objek besar berisi seluruh kondisi aplikasi
+│       ├─ Persistensi (localStorage/Firestore)
+│       ├─ Autentikasi (lokal & Firebase)
+│       ├─ Agregasi data (total, grafik, insight)
+│       ├─ `renderApp()` — jantung aplikasi
+│       ├─ `render...()` per halaman/komponen
+│       ├─ Fungsi aksi (`submit...`, `delete...`, `toggle...`, dst.)
+│       └─ Inisialisasi akhir (`loadData()`, `renderApp()`, interval)
+└─ </html>
+```
+
+> 💡 Untuk menavigasi file ini dengan cepat, cari komentar blok berformat:
+> ```js
+> /* ======================================================================
+>    Nama Bagian
+> ====================================================================== */
+> ```
+> Setiap bagian besar (autentikasi, dashboard, budget, tabungan, dst.) diawali komentar seperti ini.
+
+---
+
+## 4. Model Data (State)
+
+Seluruh kondisi aplikasi — halaman aktif, isi form yang sedang diketik, status modal terbuka/tertutup, sampai preferensi tema — disimpan dalam **satu objek JavaScript** bernama `state`. Ini adalah *single source of truth* aplikasi.
+
+Beberapa kelompok penting di dalam `state`:
+
+| Kelompok | Contoh field | Fungsi |
+|---|---|---|
+| Navigasi | `page`, `mobileNavOpen`, `notifOpen` | Menentukan halaman & panel apa yang tampil |
+| Form transaksi | `modalForm` | Menyimpan isi form "Tambah Transaksi" yang sedang diketik |
+| Form fitur lain | `budgetForm`, `accountForm`, `billForm`, `savingsForm`, `categoryForm` | Pola serupa untuk tiap fitur tambah-data |
+| Autentikasi | `auth`, `session`, `authForm`, `authTab` | Status login & isi form login/daftar |
+| Preferensi | `theme`, `settingsCurrency`, `toggles`, `balanceHidden`, `hiddenAccounts` | Pengaturan yang dipilih pengguna |
+| Profil | `profile` (nama, email, pendapatan bulanan, foto) | Data identitas pengguna |
+| Streak | `streak` (jumlah hari, tanggal terakhir menabung) | Melacak kebiasaan menabung harian |
+
+Selain `state`, ada beberapa **variabel data terpisah** (bukan bagian dari `state`) yang mewakili "database" aplikasi:
+
+```js
+let transactions   // seluruh transaksi
+let accounts        // seluruh rekening
+let budgets          // seluruh anggaran
+let savingsGoals     // seluruh target tabungan
+let bills            // seluruh pengingat tagihan
+let allCategories    // seluruh kategori (bawaan + custom)
+```
+
+Variabel-variabel ini dipisah dari `state` karena ukurannya bisa besar dan punya siklus hidup sendiri (ditambah/dihapus lewat aksi CRUD), sementara `state` lebih berisi hal-hal seputar tampilan sesaat.
+
+---
+
+## 5. Sistem Render
+
+### `renderApp()` — fungsi paling penting di seluruh proyek
+
+Alurnya kurang lebih:
+
+1. Simpan data ke penyimpanan (`saveData()`).
+2. Kalau belum login (`state.session === false`) → tampilkan layar login (`renderAuthScreen()`) dan berhenti di situ.
+3. Simpan posisi scroll rekening (`#accountsScroll`) agar tidak reset.
+4. Hitung data agregat (`getAggregates()`) dan notifikasi (`getNotifications()`).
+5. Bangun seluruh HTML aplikasi (sidebar, topbar, konten halaman, modal jika terbuka, drawer mobile, toast) lewat template string besar, lalu suntikkan ke `#app`.
+6. Kembalikan posisi scroll rekening.
+7. Kalau halaman aktif adalah Dashboard atau Laporan, pasang ulang grafik Chart.js (`mountDashboardChart` / `mountReportsCharts`) — karena elemen `<canvas>` ikut dibuat ulang, grafik lama perlu di-*mount* lagi.
+
+### Pola render per halaman
+
+Setiap halaman (Dashboard, Jurnal, Budget, dst.) punya fungsi `render<NamaHalaman>()` sendiri yang **mengembalikan string HTML**, dipanggil oleh `renderPage(agg)` berdasarkan `state.page`. Pola ini konsisten di seluruh aplikasi — memudahkan menemukan kode suatu halaman hanya dengan mencari nama fungsinya.
+
+### Kapan render ulang penuh **tidak** dipakai
+
+Untuk kolom deskripsi, catatan, nama, dan nominal (semua input teks/angka), aplikasi **sengaja tidak** memanggil `renderApp()` pada setiap ketikan. Sebagai gantinya:
+
+- Nilai mentah langsung disimpan ke `state` (`state.modalForm.description = val`).
+- Elemen yang perlu diperbarui live (tombol simpan, chip saran kategori) diubah langsung lewat `document.getElementById(...)`.
+- Untuk nominal, fungsi `liveFormatAmountInput(el, rawDigits)` memformat ulang tampilan angka dengan pemisah ribuan (koma) **dan** menghitung ulang posisi kursor secara manual, supaya kursor tidak "meloncat" saat koma disisipkan.
+
+---
+
+## 6. Autentikasi & Keamanan Akun
+
+Finora punya **dua mode login** yang saling eksklusif, ditentukan otomatis oleh ada/tidaknya konfigurasi Firebase:
+
+### Mode Lokal (default, tanpa setup apa pun)
+- Akun (username via **email** + password) disimpan di `localStorage` perangkat itu sendiri.
+- Password di-hash dengan fungsi hash sederhana (`simpleHash`) — **bukan** enkripsi tingkat produksi, hanya proteksi akses dasar di perangkat yang sama.
+- Data **tidak** tersinkron ke perangkat lain.
+- Ditandai jelas di layar login: *"🔒 Mode lokal: proteksi & data berjalan di perangkat/browser ini saja."*
+
+### Mode Cloud (opsional, lewat Firebase)
+- Aktif otomatis jika developer mengisi objek `FIREBASE_CONFIG` di dalam kode dengan kredensial proyek Firebase miliknya sendiri.
+- Login dengan **email & password sungguhan**, atau tombol **"Lanjutkan dengan Google"**.
+- Seluruh data (transaksi, rekening, budget, dst.) disinkronkan ke **Cloud Firestore**, sehingga login dari perangkat lain akan memuat data yang sama persis.
+- Ganti password lewat re-autentikasi (`reauthenticateWithCredential`) sebelum `updatePassword()`, sesuai syarat keamanan Firebase.
+- Ada alur "Lupa kata sandi?" yang mengirim email reset (`sendPasswordResetEmail`).
+
+### Auto-lock saat browser ditutup
+
+Ini adalah salah satu detail keamanan paling halus di aplikasi ini. Tantangannya: pengguna ingin **tetap login setelah refresh (F5)**, tapi **wajib login ulang setelah benar-benar menutup tab/browser**.
+
+Solusinya memanfaatkan perbedaan sifat dua jenis penyimpanan browser:
+
+| Storage | Bertahan setelah refresh? | Bertahan setelah tab/browser ditutup? |
+|---|---|---|
+| `localStorage` | ✅ Ya | ✅ Ya |
+| `sessionStorage` | ✅ Ya | ❌ Tidak |
+
+Finora menyimpan status "sesi aktif" (`state.session`) di `sessionStorage` (lewat `TAB_ALIVE_KEY`), sementara data akun & transaksi tetap di `localStorage`. Hasilnya:
+- **Refresh halaman** → `sessionStorage` masih ada → tetap login.
+- **Tutup tab/browser lalu buka lagi** → `sessionStorage` hilang otomatis oleh browser → wajib login ulang, walau data lama tetap aman di `localStorage`.
+
+Perilaku ini berlaku sama baik di mode lokal maupun cloud (untuk mode cloud, persistence Firebase Auth diset eksplisit ke `SESSION` lewat `fbAuth.setPersistence(...)` agar konsisten).
+
+### Fitur pendukung lain
+- **Ganti foto profil**: klik avatar di halaman Pengaturan → belum ada foto langsung buka galeri; sudah ada foto → muncul menu "Ganti Foto" / "Hapus Foto". Foto di-*crop* persegi & dikompres (maks 240×240, JPEG kualitas 0.85) lewat `<canvas>` sebelum disimpan sebagai data URL, supaya hemat ruang penyimpanan.
+- **Sembunyikan saldo**: tombol mata (👁) di kartu "Saldo Saat Ini" menyamarkan seluruh angka ringkasan jadi `••••••`. Setiap kartu rekening juga punya tombol mata sendiri, **independen** satu sama lain (`state.hiddenAccounts`).
+
+---
+
+## 7. Halaman Dashboard
+
+Halaman pertama yang dilihat pengguna setelah login (`renderDashboard(agg)`). Berisi:
+
+1. **Sapaan** — "Hi, [Nama]" + tanggal hari ini (real-time, diperbarui tiap menit lewat `setInterval`).
+2. **Aksi Cepat** — tombol Pemasukan / Pengeluaran / Transfer yang langsung membuka modal Tambah Transaksi dengan tipe sudah dipilih.
+3. **Akun Saya** — daftar kartu rekening yang bisa di-scroll horizontal, dengan tombol tambah rekening, ganti warna, hapus, dan sembunyikan saldo per kartu (lihat [§14](#14-manajemen-rekening)).
+4. **4 Kartu Ringkasan** — Saldo Saat Ini, Total Pemasukan, Total Pengeluaran, Total Tabungan bulan berjalan — masing-masing dengan indikator naik/turun dibanding bulan lalu.
+5. **Streak & Pencapaian** — ikon api yang menyala/mati tergantung kebiasaan menabung (lihat [§10](#10-halaman-tabungan--sistem-streak)).
+6. **Budget Terpantau** — anggaran dengan progres tertinggi bulan ini.
+7. **Grafik Pemasukan vs Pengeluaran** — batang per hari (7/30 hari) atau per bulan (3/6/12 bulan), dibangun murni dari transaksi asli (`buildCashflowSeries`) — **tidak ada data contoh/dummy** yang ikut ditampilkan untuk bulan tanpa transaksi.
+8. **Kategori Pengeluaran Terbesar** — top 3 kategori bulan ini.
+9. **Tagihan Mendatang** — daftar tagihan yang akan/sudah jatuh tempo, dengan fitur tambah, tandai lunas, dan hapus.
+10. **Transaksi Terbaru** — 5 transaksi terakhir.
+
+---
+
+## 8. Halaman Jurnal Transaksi
+
+`renderJournal()` menampilkan **seluruh riwayat transaksi** dengan:
+- Pencarian teks bebas (deskripsi, kategori, catatan, nominal).
+- Filter: jenis (pemasukan/pengeluaran/transfer), kategori, rekening, urutan (terbaru/terlama).
+- Pagination sederhana lewat tombol "Tampilkan Lebih Banyak" (menambah `visibleCount` per klik).
+- Tombol hapus per transaksi (`deleteTransactionById`).
+
+Pencarian & filter di halaman ini **tidak** memicu render ulang seluruh halaman — hanya kontainer hasil (`#journalResultsSlot`) yang diperbarui, supaya kolom pencarian tidak kehilangan fokus/keyboard saat mengetik.
+
+---
+
+## 9. Halaman Budget
+
+`renderBudgetPage(agg)` — mengatur batas pengeluaran bulanan per kategori.
+
+- **Buat Budget**: pilih kategori (termasuk kategori custom yang sudah dibuat) atau ketik **nama kategori baru langsung dari form ini** (opsi `"+ Kategori baru..."` di dropdown) — jadi tidak dibatasi daftar kategori bawaan.
+- **Indikator status**: Aman (hijau) / Mendekati (kuning, ≥80%) / Melebihi (merah, ≥100%), dihitung otomatis dari transaksi pengeluaran bulan berjalan pada kategori tersebut.
+- **Hapus budget**: kategori yang budget-nya dihapus otomatis bisa dipakai lagi untuk budget baru.
+
+---
+
+## 10. Halaman Tabungan & Sistem Streak
+
+### Target Tabungan (`renderSavingsPage`)
+- Buat tabungan baru: nama, emoji, target dana, dana awal (opsional), tenggat waktu, warna kartu.
+- Tiap kartu tabungan punya progres visual menuju target.
+- **Tambah** dan **Kurangi** saldo tabungan secara terpisah — fitur "Kurangi" sengaja ditambahkan supaya kesalahan ketik nominal bisa dikoreksi tanpa harus menghapus & membuat ulang seluruh tabungan.
+- Hapus tabungan (dengan konfirmasi).
+
+### Sistem Streak (`STREAK_MIN_AMOUNT`, `recordSavingsStreak`, `getStreakDisplay`)
+
+Terinspirasi dari fitur *streak* aplikasi pembelajaran bahasa — memberi dorongan psikologis untuk menabung konsisten setiap hari.
+
+**Aturan mainnya:**
+- Streak hanya menyala jika nominal yang ditabung ≥ `STREAK_MIN_AMOUNT` (**Rp 10.000**).
+- **Mengurangi** saldo (mode koreksi) **tidak pernah** dihitung sebagai aktivitas menabung.
+- Menabung lebih dari sekali di hari yang sama tidak melipatgandakan hitungan — cukup 1x per hari.
+- Jika sehari terlewat tanpa menabung sesuai syarat, hitungan streak reset ke 0 (ikon api berubah abu-abu) dan mulai dari 1 lagi saat menabung berikutnya.
+
+```js
+function getStreakDisplay(){
+  // alive = true jika terakhir menabung adalah HARI INI atau KEMARIN
+  // kalau lebih dari itu (terlewat), count ditampilkan 0 & alive:false
+}
+```
+
+Notifikasi pengingat streak (`getStreakNotification`) muncul di ikon lonceng setiap hari pengguna belum menabung — dengan nada berbeda tergantung apakah streak masih "bisa diselamatkan hari ini" atau memang belum pernah dimulai.
+
+---
+
+## 11. Halaman Kategori
+
+Mengelola kategori pemasukan & pengeluaran secara bebas:
+- Tambah kategori baru dengan nama, tipe (income/expense), dan warna (dipilih dari palet atau warna kustom lewat color-picker native browser).
+- Hapus kategori (kategori bawaan maupun custom).
+- Kategori custom otomatis muncul di semua tempat pemilihan kategori lain: form transaksi, form budget, filter jurnal, dsb. — karena semuanya membaca dari sumber data yang sama (`allCategories`).
+
+---
+
+## 12. Halaman Laporan & Ekspor PDF
+
+`renderReportsPage(agg)` menyajikan analisis bulan berjalan:
+- Donut chart pengeluaran per kategori.
+- Bar chart pemasukan vs pengeluaran 6 bulan terakhir.
+- Ranking 5 kategori pengeluaran terbesar.
+- Ringkasan keuangan: rata-rata pengeluaran harian, pengeluaran terbesar, dsb.
+
+### Ekspor Laporan PDF (`downloadMonthlyReportPdf`)
+
+Fitur unduh rekap transaksi ke PDF, **independen dari tampilan "bulan berjalan"** di atas — pengguna bisa memilih bulan mana saja lewat `<input type="month">`.
+
+Alur kerja fungsinya:
+1. Filter `transactions` sesuai bulan yang dipilih.
+2. Kalau kosong → tampilkan toast peringatan, tidak lanjut membuat PDF.
+3. Hitung total pemasukan, pengeluaran, selisih (net), dan jumlah transaksi.
+4. Bangun dokumen PDF dengan **jsPDF**: header, ringkasan angka, lalu tabel rinci lewat plugin **jsPDF-AutoTable** — berisi tanggal, jenis, **deskripsi/nama item**, kategori, rekening, dan nominal (nominal pengeluaran diwarnai merah, pemasukan hijau).
+5. Simpan file dengan nama `Finora-Laporan-YYYY-MM.pdf`.
+
+> Fitur ini memerlukan koneksi internet saat halaman pertama kali dimuat (karena library jsPDF dimuat dari CDN). Jika gagal dimuat, tombol unduh akan menampilkan toast peringatan alih-alih membuat aplikasi crash.
+
+---
+
+## 13. Halaman Pengaturan
+
+`renderSettingsPage()` dibagi menjadi beberapa kartu:
+
+| Kartu | Isi |
+|---|---|
+| **Profil** | Nama, email, pendapatan bulanan, foto profil |
+| **Keamanan Akun** | Info login, ubah password (mode lokal atau cloud), tombol keluar |
+| **Tampilan** | Toggle tema terang/gelap |
+| **Mata Uang** | Pilih mata uang tampilan (IDR/USD/EUR/SGD/JPY), status kurs otomatis, tombol perbarui kurs manual |
+| **Notifikasi** | Toggle: peringatan budget, pengingat tagihan, pengingat menabung, ringkasan mingguan |
+
+Semua input di halaman ini mengikuti pola "tidak render ulang penuh saat mengetik" yang dijelaskan di [§5](#5-sistem-render).
+
+---
+
+## 14. Manajemen Rekening
+
+Kartu rekening (`.fn-bank-card`) di Dashboard punya empat aksi, semuanya CRUD penuh:
+
+| Aksi | Fungsi | Catatan |
+|---|---|---|
+| Tambah | `submitAccount()` | Nama, jenis (Bank/E-Wallet/Tunai/Kartu Kredit/Investasi), saldo awal, warna |
+| Ganti warna | `toggleAccountColorEditor()` → `applyAccountColor()` | Bisa pilih dari palet atau warna kustom (color-picker native) |
+| Sembunyikan saldo | `toggleAccountBalanceVisibility()` | Per rekening, independen dari toggle "Saldo Saat I
